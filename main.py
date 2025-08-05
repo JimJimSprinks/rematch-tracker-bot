@@ -170,7 +170,7 @@ def fetch_profile(platform: str, player_id: str) -> dict:
     options.add_argument("--remote-debugging-port=9222")
     options.add_argument("--window-size=1920,1080")
 
-    driver = webdriver.Chrome(service=Service("/usr/local/bin/chromedriver"), options=options)
+    driver = webdriver.Chrome(options=options)
     url = f"https://www.rematchtracker.com/player/{platform}/{player_id}"
     driver.get(url)
 
@@ -234,5 +234,6 @@ def fetch_profile(platform: str, player_id: str) -> dict:
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
