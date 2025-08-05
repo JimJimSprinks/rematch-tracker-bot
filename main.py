@@ -163,20 +163,24 @@ def fetch_profile(platform: str, player_id: str) -> dict:
     import time
 
     options = Options()
-    options.add_argument("--headless=new")
+    options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--remote-debugging-port=9222")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--single-process")
+    options.add_argument("--log-level=3")  # Reduces logging noise
+
 
     driver = webdriver.Chrome(options=options)
     url = f"https://www.rematchtracker.com/player/{platform}/{player_id}"
     driver.get(url)
 
     try:
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
-        time.sleep(2)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.text-lg.font-bold.text-green-400"))
+        )
         html = driver.page_source
     finally:
         driver.quit()
@@ -234,6 +238,7 @@ def fetch_profile(platform: str, player_id: str) -> dict:
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
