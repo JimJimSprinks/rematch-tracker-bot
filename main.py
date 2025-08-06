@@ -232,8 +232,8 @@ async def generate_stats_card(user_name, profile_data, avatar_url=None):
             print(f"Error loading avatar: {e}")
 
     try:
-        title_font = ImageFont.truetype("arial.ttf", 36)
-        stat_font = ImageFont.truetype("arial.ttf", 32)
+        title_font = ImageFont.truetype("/usr/share/fonts/truetype/msttcorefonts/arial.ttf", 36)
+        stat_font = ImageFont.truetype("/usr/share/fonts/truetype/msttcorefonts/arial.ttf", 32)
     except:
         title_font = stat_font = ImageFont.load_default()
 
@@ -409,7 +409,7 @@ async def generate_rank_card(user_name, rank, avatar_url=None):
     # Draw text
     try:
         base_font_size = 36
-        font_path = "arial.ttf"
+        font_path = "/usr/share/fonts/truetype/msttcorefonts/arial.ttf"
         font = ImageFont.truetype(font_path, base_font_size)
     except:
         font = ImageFont.load_default()
@@ -450,6 +450,7 @@ async def generate_rank_card(user_name, rank, avatar_url=None):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
