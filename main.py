@@ -98,7 +98,7 @@ async def rank(ctx):
                 row = await cursor.fetchone()
 
         if row is None:
-            await ctx.send("❌ You haven't linked a profile yet. Use `!link <profile URL>` first.")
+            await ctx.send("❌ You haven't linked a profile yet. Use `!link <REMATCH TRACKER (not u.gg) profile URL>` first.")
             return
 
         platform, player_id = row
@@ -130,7 +130,7 @@ async def stats(ctx):
                 row = await cursor.fetchone()
 
         if row is None:
-            await ctx.send("❌ You haven't linked a profile yet. Use `!link <profile URL>` first.")
+            await ctx.send("❌ You haven't linked a profile yet. Use `!link <REMATCH TRACKER (not u.gg) profile URL>` first.")
             return
 
         platform, player_id = row
@@ -238,6 +238,7 @@ def fetch_profile(platform: str, player_id: str) -> dict:
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
