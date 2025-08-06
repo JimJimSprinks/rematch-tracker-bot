@@ -229,15 +229,16 @@ async def generate_stats_card(user_name, profile_data, avatar_url=None):
             avatar_circular.paste(avatar_img, (0, 0), mask)
             avatar_final = Image.alpha_composite(avatar_circular, border_layer)
 
-            avatar_x = 660
+            avatar_x = 640  # shifted 20px left from previous 660 for padding
             avatar_y = (300 - 128) // 2
             bg.paste(avatar_final, (avatar_x, avatar_y), avatar_final)
         except Exception as e:
             print(f"Error loading avatar: {e}")
 
     try:
-        title_font = ImageFont.truetype("/usr/share/fonts/truetype/msttcorefonts/arial.ttf", 36)
-        stat_font = ImageFont.truetype("/usr/share/fonts/truetype/msttcorefonts/arial.ttf", 32)
+        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        title_font = ImageFont.truetype(font_path, 36)
+        stat_font = ImageFont.truetype(font_path, 32)
     except:
         title_font = stat_font = ImageFont.load_default()
 
@@ -454,6 +455,7 @@ async def generate_rank_card(user_name, rank, avatar_url=None):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
