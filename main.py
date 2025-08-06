@@ -87,6 +87,40 @@ async def unlink(ctx, member: discord.Member):
         await ctx.send(f"❌ Error unlinking profile: {e}")
 
 @bot.command()
+@commands.has_permissions(administrator=True)
+async def listlinks(ctx):
+    try:
+        async with aiosqlite.connect("linked_profiles.db") as db:
+            async with db.execute("SELECT discord_id, platform, player_id FROM linked_profiles") as cursor:
+                rows = await cursor.fetchall()
+
+        if not rows:
+            await ctx.send("❌ No linked profiles found.")
+            return
+
+        lines = []
+        for discord_id, platform, player_id in rows:
+            try:
+                member = ctx.guild.get_member(int(discord_id))
+                if member:
+                    name = member.nick if member.nick else member.name
+                else:
+                    user = await bot.fetch_user(int(discord_id))
+                    name = user.name
+            except:
+                name = f"UnknownUser ({discord_id})"
+
+            lines.append(f"**{name}** → `{platform}/{player_id}`")
+
+        description = "
+".join(lines)
+        embed = discord.Embed(title="🔗 Linked Accounts", description=description, color=discord.Color.blue())
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"⚠️ Error listing links: {e}")
+
+@bot.command()
 async def rank(ctx):
     try:
         discord_id = str(ctx.author.id)
@@ -192,6 +226,7 @@ async def fetch_profile(platform: str, player_id: str) -> dict:
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
