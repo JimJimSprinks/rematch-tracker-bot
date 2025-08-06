@@ -162,7 +162,11 @@ async def rank(ctx, member: discord.Member = None):
                 await ctx.send("⚠️ Missing permissions to change roles.")
 
         target = member.display_name if member else ctx.author.display_name
-        await ctx.send(f"✅ Rank for {target}: **{profile_data['rank']}**")
+        avatar_url = (member or ctx.author).avatar.url if (member or ctx.author).avatar else None
+        image_path = await generate_rank_card(target, profile_data['rank'], avatar_url)
+        file = discord.File(image_path, filename="rank.png")
+        await ctx.send(file=file)
+        os.remove(image_path)
 
     except Exception as e:
         await ctx.send(f"❌ Error fetching rank: {e}")
@@ -184,19 +188,126 @@ async def stats(ctx, member: discord.Member = None):
         profile_data = await fetch_profile(platform, player_id)
 
         target_name = member.display_name if member else ctx.author.display_name
-        embed = discord.Embed(title=f"{target_name}'s Stats", color=0x00ffcc)
-        embed.add_field(name="Rank", value=profile_data['rank'], inline=True)
-        embed.add_field(name="Wins", value=profile_data['wins'], inline=True)
-        embed.add_field(name="Losses", value=profile_data['losses'], inline=True)
-        embed.add_field(name="Goals", value=profile_data['goals'], inline=True)
-        embed.add_field(name="Passes", value=profile_data['passes'], inline=True)
-        embed.add_field(name="Steals", value=profile_data['steals'], inline=True)
-        embed.add_field(name="Saves", value=profile_data['saves'], inline=True)
-
-        await ctx.send(embed=embed)
+        avatar_url = (member or ctx.author).avatar.url if (member or ctx.author).avatar else None
+        image_path = await generate_stats_card(target_name, profile_data, avatar_url)
+        file = discord.File(image_path, filename="stats.png")
+        await ctx.send(file=file)
+        os.remove(image_path)
 
     except Exception as e:
         await ctx.send(f"❌ Error fetching stats: {e}")
+
+async def generate_stats_card(user_name, profile_data, avatar_url=None):
+    bg = Image.new("RGBA", (800, 300), (30, 30, 30, 255))
+    draw = ImageDraw.Draw(bg)
+
+    if avatar_url:
+        try:
+            import requests
+            from io import BytesIO
+            response = requests.get(avatar_url)
+            avatar_img = Image.open(BytesIO(response.content)).convert("RGBA")
+            w, h = avatar_img.size
+            min_dim = min(w, h)
+            left = (w - min_dim) // 2
+            top = (h - min_dim) // 2
+            avatar_img = avatar_img.crop((left, top, left + min_dim, top + min_dim)).resize((128, 128), Image.LANCZOS)
+
+            mask = Image.new("L", (128, 128), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.ellipse((0, 0, 128, 128), fill=255)
+
+            border_layer = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+            border_draw = ImageDraw.Draw(border_layer)
+            border_draw.ellipse((0, 0, 128, 128), outline=(255, 255, 255, 255), width=4)
+
+            avatar_circular = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+            avatar_circular.paste(avatar_img, (0, 0), mask)
+            avatar_final = Image.alpha_composite(avatar_circular, border_layer)
+
+            avatar_x = 660
+            avatar_y = (300 - 128) // 2
+            bg.paste(avatar_final, (avatar_x, avatar_y), avatar_final)
+        except Exception as e:
+            print(f"Error loading avatar: {e}")
+
+    try:
+        title_font = ImageFont.truetype("arial.ttf", 36)
+        stat_font = ImageFont.truetype("arial.ttf", 32)
+    except:
+        title_font = stat_font = ImageFont.load_default()
+
+    title_text = f"{user_name}'s Stats"
+    title_width = draw.textlength(title_text, font=title_font)
+    draw.text((30, 30), title_text, font=title_font, fill=(255, 255, 255))
+
+    try:
+        from io import BytesIO
+        import requests
+        rank_icons = {
+            "Bronze": "assets/ranks/bronze.png",
+            "Silver": "assets/ranks/silver.png",
+            "Gold": "assets/ranks/gold.png",
+            "Platinum": "assets/ranks/platinum.png",
+            "Diamond": "assets/ranks/diamond.png",
+            "Champion": "assets/ranks/champion.png",
+            "Grand Champion": "assets/ranks/grand_champion.png",
+            "Legend": "assets/ranks/legend.png"
+        }
+        rank_name = profile_data.get('rank', '')
+        for key in rank_icons:
+            if key.lower() in rank_name.lower():
+                icon_path = rank_icons[key]
+                if os.path.exists(icon_path):
+                    rank_icon = Image.open(icon_path).convert("RGBA").resize((36, 36), Image.LANCZOS)
+                    bg.paste(rank_icon, (40 + int(title_width), 30), rank_icon)
+                    draw.text((80 + int(title_width), 30), rank_name, font=title_font, fill=(255, 215, 0))
+                    break
+    except Exception as e:
+        print(f"Error loading rank icon: {e}")
+
+    # Draw Wins and Losses
+    y_stats = 110
+    wins = int(profile_data['wins'])
+    losses = int(profile_data['losses'])
+    total_games = wins + losses
+    win_percent = round((wins / total_games) * 100, 1) if total_games > 0 else 0.0
+
+    draw.text((30, y_stats), "Wins:", font=stat_font, fill=(0, 255, 0))
+    draw.text((120, y_stats), str(wins), font=stat_font, fill=(255, 255, 255))
+    draw.text((250, y_stats), "Losses:", font=stat_font, fill=(255, 0, 0))
+    draw.text((370, y_stats), str(losses), font=stat_font, fill=(255, 255, 255))
+
+    # Draw remaining stats in two evenly spaced columns
+    left_column = [
+        ("Goals", profile_data['goals']),
+        ("Passes", profile_data['passes']),
+        ("Win%", f"{win_percent}%")
+    ]
+    right_column = [
+        ("Saves", profile_data['saves']),
+        ("Steals", profile_data['steals'])
+    ]
+
+    y_base = y_stats + 50
+    row_spacing = 36
+    for i, (label, value) in enumerate(left_column):
+        if label == "Win%":
+            draw.text((30, y_base + i * row_spacing), f"{label}:", font=stat_font, fill=(100, 200, 255))
+            draw.text((130, y_base + i * row_spacing), str(value), font=stat_font, fill=(255, 255, 255))
+        else:
+            draw.text((30, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
+
+    for i, (label, value) in enumerate(right_column):
+        draw.text((250, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
+
+    if not os.path.exists("stat_cards"):
+        os.makedirs("stat_cards")
+    import re
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_name)
+    path = f"stat_cards/{safe_name}_stats.png"
+    bg.save(path)
+    return path
 
 async def fetch_profile(platform: str, player_id: str) -> dict:
     from playwright.async_api import async_playwright
@@ -240,9 +351,106 @@ async def fetch_profile(platform: str, player_id: str) -> dict:
         "saves": get_stat_by_selector("span.font-bold.text-red-400.svelte-kej2cd")
     }
 
+from PIL import Image, ImageDraw, ImageFont
+import os
+
+async def generate_rank_card(user_name, rank, avatar_url=None):
+    # Create blank canvas
+    bg = Image.new("RGBA", (600, 200), (30, 30, 30, 255))
+    draw = ImageDraw.Draw(bg)
+
+    # Load rank icon
+    try:
+        icon_path = f"assets/ranks/{rank.lower().replace(' ', '_')}.png"
+        rank_icon = Image.open(icon_path).resize((128, 128))
+        bg.paste(rank_icon, (25, 36), rank_icon)
+    except FileNotFoundError:
+        print(f"Rank icon for {rank} not found.")
+
+    # Draw avatar if provided
+    if avatar_url:
+        try:
+            import requests
+            from io import BytesIO
+            response = requests.get(avatar_url)
+            avatar_img = Image.open(BytesIO(response.content)).convert("RGBA")
+            w, h = avatar_img.size
+            min_dim = min(w, h)
+            left = (w - min_dim) // 2
+            top = (h - min_dim) // 2
+            avatar_img = avatar_img.crop((left, top, left + min_dim, top + min_dim)).resize((96, 96), Image.LANCZOS)
+
+            # Create circular mask
+            mask = Image.new("L", (96, 96), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.ellipse((0, 0, 96, 96), fill=255)
+
+            # Create border layer
+            border_layer = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
+            border_draw = ImageDraw.Draw(border_layer)
+            border_draw.ellipse((0, 0, 96, 96), outline=(255, 255, 255, 255), width=4)
+
+            # Apply circular mask to avatar
+            avatar_circular = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
+            avatar_circular.paste(avatar_img, (0, 0), mask)
+
+            # Composite border on top
+            avatar_final = Image.alpha_composite(avatar_circular, border_layer)
+
+            # Paste on card
+            avatar_x = 600 - 96 - 30
+            avatar_y = (200 - 96) // 2
+            bg.paste(avatar_final, (avatar_x, avatar_y), avatar_final)
+        except Exception as e:
+            print(f"Error loading avatar: {e}")
+        except Exception as e:
+            print(f"Error loading avatar: {e}")
+
+    # Draw text
+    try:
+        base_font_size = 36
+        font_path = "arial.ttf"
+        font = ImageFont.truetype(font_path, base_font_size)
+    except:
+        font = ImageFont.load_default()
+
+    max_width = 304  # prevent text from overlapping avatar
+    text = f"{user_name}'s Rank"
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    while text_width > max_width and base_font_size > 12:
+        base_font_size -= 1
+        try:
+            font = ImageFont.truetype(font_path, base_font_size)
+        except:
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+
+    draw.text((170, 70), text, font=font, fill=(255, 255, 255))
+    try:
+        rank_font = ImageFont.truetype(font_path, 32)
+    except:
+        try:
+            rank_font = ImageFont.truetype("DejaVuSans.ttf", 32)
+        except:
+            rank_font = ImageFont.load_default()
+    draw.text((170, 110), rank, font=rank_font, fill=(255, 215, 0))
+
+    # Save to file
+    if not os.path.exists("rank_cards"):
+        os.makedirs("rank_cards")
+    import re
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_name)
+    path = f"rank_cards/{safe_name}_rank.png"
+    bg.save(path)
+    return path
+
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
