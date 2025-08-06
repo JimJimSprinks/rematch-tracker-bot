@@ -112,8 +112,7 @@ async def listlinks(ctx):
 
             lines.append(f"**{name}** → `{platform}/{player_id}`")
 
-        description = "
-".join(lines)
+        description = "\n".join(lines)
         embed = discord.Embed(title="🔗 Linked Accounts", description=description, color=discord.Color.blue())
         await ctx.send(embed=embed)
 
@@ -226,6 +225,7 @@ async def fetch_profile(platform: str, player_id: str) -> dict:
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
