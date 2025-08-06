@@ -1,9 +1,10 @@
 import discord
 from discord.ext import commands
 import aiosqlite
-import requests
 from bs4 import BeautifulSoup
 import re
+from playwright.async_api import async_playwright
+import asyncio
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -25,8 +26,6 @@ async def init_db():
 async def on_ready():
     await init_db()
     print(f"Logged in as {bot.user}")
-
-# Command to link profile
 
 # Admin-only command to link a profile for another user
 @bot.command()
@@ -87,7 +86,6 @@ async def unlink(ctx, member: discord.Member):
     except Exception as e:
         await ctx.send(f"❌ Error unlinking profile: {e}")
 
-# Command to show only rank and update nickname/role
 @bot.command()
 async def rank(ctx):
     try:
@@ -98,28 +96,27 @@ async def rank(ctx):
                 row = await cursor.fetchone()
 
         if row is None:
-            await ctx.send("❌ You haven't linked a profile yet. Use `!link <REMATCH TRACKER (not u.gg) profile URL>` first.")
+            await ctx.send("❌ You haven't linked a profile yet. Use `!link <REMATCH TRACKER (not U.gg) profile URL>` first.")
             return
 
         platform, player_id = row
-        profile_data = fetch_profile(platform, player_id)
+        profile_data = await fetch_profile(platform, player_id)
 
-        # Update role only
-        try:
-            role_name = profile_data['rank']
-            role = discord.utils.get(ctx.guild.roles, name=role_name)
-            if not role:
-                role = await ctx.guild.create_role(name=role_name)
-            await ctx.author.add_roles(role)
-        except discord.Forbidden:
-            await ctx.send("⚠️ Missing permissions to change nickname or roles.")
+        if ctx.guild:
+            try:
+                role_name = profile_data['rank']
+                role = discord.utils.get(ctx.guild.roles, name=role_name)
+                if not role:
+                    role = await ctx.guild.create_role(name=role_name)
+                await ctx.author.add_roles(role)
+            except discord.Forbidden:
+                await ctx.send("⚠️ Missing permissions to change roles.")
 
         await ctx.send(f"✅ Rank: **{profile_data['rank']}**")
 
     except Exception as e:
         await ctx.send(f"❌ Error fetching rank: {e}")
 
-# Command to display full stats
 @bot.command()
 async def stats(ctx):
     try:
@@ -130,11 +127,11 @@ async def stats(ctx):
                 row = await cursor.fetchone()
 
         if row is None:
-            await ctx.send("❌ You haven't linked a profile yet. Use `!link <REMATCH TRACKER (not u.gg) profile URL>` first.")
+            await ctx.send("❌ You haven't linked a profile yet. Use `!link <REMATCH TRACKER (not U.gg) profile URL>` first.")
             return
 
         platform, player_id = row
-        profile_data = fetch_profile(platform, player_id)
+        profile_data = await fetch_profile(platform, player_id)
 
         embed = discord.Embed(title=f"{profile_data['name']}'s Stats", color=0x00ffcc)
         embed.add_field(name="Rank", value=profile_data['rank'], inline=True)
@@ -150,94 +147,52 @@ async def stats(ctx):
     except Exception as e:
         await ctx.send(f"❌ Error fetching stats: {e}")
 
-# Updated fetch function for rematchtracker.com
+async def fetch_profile(platform: str, player_id: str) -> dict:
+    from playwright.async_api import async_playwright
 
-def fetch_profile(platform: str, player_id: str) -> dict:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    from webdriver_manager.chrome import ChromeDriverManager
-    import time
-
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--single-process")
-    options.add_argument("--log-level=3")  # Reduces logging noise
-
-
-    driver = webdriver.Chrome(options=options)
     url = f"https://www.rematchtracker.com/player/{platform}/{player_id}"
-    driver.get(url)
 
-    try:
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div.text-lg.font-bold.text-green-400"))
-        )
-        html = driver.page_source
-    finally:
-        driver.quit()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+        await page.goto(url)
+        await page.wait_for_selector("h1")
+        html = await page.content()
+        await browser.close()
 
     soup = BeautifulSoup(html, 'html.parser')
-    with open("rematch_debug_output.html", "w", encoding="utf-8") as f:
-        f.write(soup.prettify())
-    print("✅ HTML written to rematch_debug_output.html")
 
-    name_section = soup.select_one("section.relative.overflow-hidden")
     name = "Unknown"
     rank = "N/A"
-    if name_section:
-        name_tag = soup.select_one(r"body > div > main > section.relative.overflow-hidden.svelte-kej2cd > div.relative.z-10.max-w-6xl.mx-auto.px-4.pt-24.svelte-kej2cd > div > div.lg\:col-span-8.svelte-kej2cd > div > div.flex.flex-col.justify-between.py-1.flex-1.svelte-kej2cd > div.flex.items-center.gap-3.mb-3.svelte-kej2cd > h1")
-        if name_tag:
-            name = name_tag.get_text(strip=True)
-        rank_tag = soup.select_one(r"body > div > main > section.relative.overflow-hidden.svelte-kej2cd > div.relative.z-10.max-w-6xl.mx-auto.px-4.pt-24.svelte-kej2cd > div > div.lg\:col-span-4.svelte-kej2cd > div > div.text-lg.font-bold.text-white.mb-1.svelte-kej2cd")
-        if rank_tag:
-            rank = rank_tag.get_text(strip=True).replace("Rank:", "").strip()
 
-    def get_stat(label):
-        print(f"🔍 Searching for label: {label}")
-        section = soup.select_one(r"section.py-8.px-4.bg-gray-800\/50")
-        if not section:
-            return "N/A"
-        stat_blocks = section.find_all("div", class_=re.compile("flex flex-col"))
-        print(f"📦 Found {len(stat_blocks)} stat blocks")
-        for block in stat_blocks:
-            print("-- BLOCK START --")
-            print(block.get_text(strip=True))
-            print("-- BLOCK END --")
-        for block in stat_blocks:
-            label_div = block.find("div", class_=re.compile("text-white/60 text-sm"))
-            value_div = block.find("div", class_=re.compile("text-lg.*font-bold"))
-            if label_div and value_div:
-                found_label = label_div.get_text(strip=True)
-                found_value = value_div.get_text(strip=True)
-                print(f"➡️ Found label: '{found_label}' with value: '{found_value}'")
-                label_cleaned = re.sub(r'[^a-zA-Z]', '', found_label).lower()
-                if label.lower() == label_cleaned:
-                    return found_value
-        return "N/A"
+    name_tag = soup.select_one("h1")
+    if name_tag:
+        name = name_tag.get_text(strip=True)
+
+    rank_tag = soup.select_one("div.text-lg.font-bold.text-white")
+    if rank_tag:
+        rank = rank_tag.get_text(strip=True)
+
+    def get_stat_by_selector(selector):
+        el = soup.select_one(selector)
+        return el.get_text(strip=True) if el else "N/A"
 
     return {
         "name": name,
         "rank": rank,
-        "wins": soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(1) > div > div.text-center.p-2.bg-gray-900\/30.rounded.border.border-green-400\/20.svelte-kej2cd > div.text-lg.font-bold.text-green-400.svelte-kej2cd").get_text(strip=True) if soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(1) > div > div.text-center.p-2.bg-gray-900\/30.rounded.border.border-green-400\/20.svelte-kej2cd > div.text-lg.font-bold.text-green-400.svelte-kej2cd") else "N/A",
-        "losses": soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(1) > div > div.text-center.p-2.bg-gray-900\/30.rounded.border.border-red-400\/20.svelte-kej2cd > div.text-lg.font-bold.text-red-400.svelte-kej2cd").get_text(strip=True) if soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(1) > div > div.text-center.p-2.bg-gray-900\/30.rounded.border.border-red-400\/20.svelte-kej2cd > div.text-lg.font-bold.text-red-400.svelte-kej2cd") else "N/A",
-        "goals": soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(2) > div > div:nth-child(1) > span.font-bold.text-purple-400.svelte-kej2cd").get_text(strip=True) if soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(2) > div > div:nth-child(1) > span.font-bold.text-purple-400.svelte-kej2cd") else "N/A",
-        "passes": soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(3) > div > div:nth-child(1) > span.font-bold.text-blue-400.svelte-kej2cd").get_text(strip=True) if soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(3) > div > div:nth-child(1) > span.font-bold.text-blue-400.svelte-kej2cd") else "N/A",
-        "steals": soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(4) > div > div:nth-child(3) > span.font-bold.text-pink-400.svelte-kej2cd").get_text(strip=True) if soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(4) > div > div:nth-child(3) > span.font-bold.text-pink-400.svelte-kej2cd") else "N/A",
-        "saves": soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(4) > div > div:nth-child(4) > span.font-bold.text-red-400.svelte-kej2cd").get_text(strip=True) if soup.select_one(r"body > div > main > section.py-8.px-4.bg-gray-800\/50.svelte-kej2cd > div > div > div:nth-child(1) > div.h-fit.bg-gray-800\/60.border.border-gray-700\/50.p-6.svelte-kej2cd > div.space-y-4.svelte-kej2cd > div:nth-child(4) > div > div:nth-child(4) > span.font-bold.text-red-400.svelte-kej2cd") else "N/A"
+        "wins": get_stat_by_selector("div.text-lg.font-bold.text-green-400.svelte-kej2cd"),
+        "losses": get_stat_by_selector("div.text-lg.font-bold.text-red-400.svelte-kej2cd"),
+        "goals": get_stat_by_selector("span.font-bold.text-purple-400.svelte-kej2cd"),
+        "passes": get_stat_by_selector("span.font-bold.text-blue-400.svelte-kej2cd"),
+        "steals": get_stat_by_selector("span.font-bold.text-pink-400.svelte-kej2cd"),
+        "saves": get_stat_by_selector("span.font-bold.text-red-400.svelte-kej2cd")
     }
 
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
