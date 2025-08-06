@@ -53,19 +53,23 @@ async def forcelink(ctx, member: discord.Member, profile_url: str):
 @bot.command()
 async def link(ctx, profile_url: str):
     try:
+        discord_id = str(ctx.author.id)
+
+        async with aiosqlite.connect("linked_profiles.db") as db:
+            async with db.execute("SELECT * FROM linked_profiles WHERE discord_id = ?", (discord_id,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    await ctx.send("⚠️ You have already linked a profile. Contact an admin to relink.")
+                    return
+
         parts = profile_url.strip('/').split('/')
         profile_index = parts.index("player")
         platform = parts[profile_index + 1]
         user_id = parts[profile_index + 2]
 
-        if member and not ctx.author.guild_permissions.administrator:
-            await ctx.send("❌ You must be an admin to check another user's rank.")
-            return
-        discord_id = str(member.id if member else ctx.author.id)
-
         async with aiosqlite.connect("linked_profiles.db") as db:
             await db.execute(
-                "REPLACE INTO linked_profiles (discord_id, platform, player_id) VALUES (?, ?, ?)",
+                "INSERT INTO linked_profiles (discord_id, platform, player_id) VALUES (?, ?, ?)",
                 (discord_id, platform, user_id)
             )
             await db.commit()
@@ -450,6 +454,7 @@ async def generate_rank_card(user_name, rank, avatar_url=None):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
