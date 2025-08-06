@@ -58,7 +58,10 @@ async def link(ctx, profile_url: str):
         platform = parts[profile_index + 1]
         user_id = parts[profile_index + 2]
 
-        discord_id = str(ctx.author.id)
+        if member and not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ You must be an admin to check another user's rank.")
+            return
+        discord_id = str(member.id if member else ctx.author.id)
 
         async with aiosqlite.connect("linked_profiles.db") as db:
             await db.execute(
@@ -70,6 +73,18 @@ async def link(ctx, profile_url: str):
         await ctx.send(f"✅ Linked to `{platform}/{user_id}`.")
     except Exception as e:
         await ctx.send(f"❌ Error linking profile: {e}")
+
+# Admin-only command to clear the entire database
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def cleardb(ctx):
+    try:
+        async with aiosqlite.connect("linked_profiles.db") as db:
+            await db.execute("DELETE FROM linked_profiles")
+            await db.commit()
+        await ctx.send("🧨 All linked profiles have been cleared from the database.")
+    except Exception as e:
+        await ctx.send(f"❌ Error clearing the database: {e}")
 
 # Admin-only command to unlink a profile
 @bot.command()
@@ -120,9 +135,9 @@ async def listlinks(ctx):
         await ctx.send(f"⚠️ Error listing links: {e}")
 
 @bot.command()
-async def rank(ctx):
+async def rank(ctx, member: discord.Member = None):
     try:
-        discord_id = str(ctx.author.id)
+        discord_id = str(member.id if member else ctx.author.id)
 
         async with aiosqlite.connect("linked_profiles.db") as db:
             async with db.execute("SELECT platform, player_id FROM linked_profiles WHERE discord_id = ?", (discord_id,)) as cursor:
@@ -141,19 +156,21 @@ async def rank(ctx):
                 role = discord.utils.get(ctx.guild.roles, name=role_name)
                 if not role:
                     role = await ctx.guild.create_role(name=role_name)
-                await ctx.author.add_roles(role)
+                target = member if member else ctx.author
+                await target.add_roles(role)
             except discord.Forbidden:
                 await ctx.send("⚠️ Missing permissions to change roles.")
 
-        await ctx.send(f"✅ Rank: **{profile_data['rank']}**")
+        target = member.display_name if member else ctx.author.display_name
+        await ctx.send(f"✅ Rank for {target}: **{profile_data['rank']}**")
 
     except Exception as e:
         await ctx.send(f"❌ Error fetching rank: {e}")
 
 @bot.command()
-async def stats(ctx):
+async def stats(ctx, member: discord.Member = None):
     try:
-        discord_id = str(ctx.author.id)
+        discord_id = str(member.id if member else ctx.author.id)
 
         async with aiosqlite.connect("linked_profiles.db") as db:
             async with db.execute("SELECT platform, player_id FROM linked_profiles WHERE discord_id = ?", (discord_id,)) as cursor:
@@ -166,7 +183,8 @@ async def stats(ctx):
         platform, player_id = row
         profile_data = await fetch_profile(platform, player_id)
 
-        embed = discord.Embed(title=f"{profile_data['name']}'s Stats", color=0x00ffcc)
+        target_name = member.display_name if member else ctx.author.display_name
+        embed = discord.Embed(title=f"{target_name}'s Stats", color=0x00ffcc)
         embed.add_field(name="Rank", value=profile_data['rank'], inline=True)
         embed.add_field(name="Wins", value=profile_data['wins'], inline=True)
         embed.add_field(name="Losses", value=profile_data['losses'], inline=True)
@@ -225,6 +243,7 @@ async def fetch_profile(platform: str, player_id: str) -> dict:
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
