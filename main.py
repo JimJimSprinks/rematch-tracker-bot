@@ -255,9 +255,8 @@ async def generate_stats_card(user_name, profile_data, avatar_url=None):
             "Gold": "assets/ranks/gold.png",
             "Platinum": "assets/ranks/platinum.png",
             "Diamond": "assets/ranks/diamond.png",
-            "Champion": "assets/ranks/champion.png",
-            "Grand Champion": "assets/ranks/grand_champion.png",
-            "Legend": "assets/ranks/legend.png"
+            "Master": "assets/ranks/master.png",
+            "Elite": "assets/ranks/elite.png",
         }
         rank_name = profile_data.get('rank', '')
         for key in rank_icons:
@@ -455,6 +454,7 @@ async def generate_rank_card(user_name, rank, avatar_url=None):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
