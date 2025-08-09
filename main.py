@@ -503,8 +503,8 @@ async def generate_stats_card(user_name, profile_data, avatar_url=None):
             "Gold": "assets/ranks/gold.png",
             "Platinum": "assets/ranks/platinum.png",
             "Diamond": "assets/ranks/diamond.png",
-            "Master": "assets/ranks/master.png"
-            "Elite" "assets/ranks/elite.png"
+            "Master": "assets/ranks/master.png",
+            "Elite": "assets/ranks/elite.png"
         }
         rank_name = profile_data.get('rank', '')
         for key in rank_icons:
@@ -931,6 +931,7 @@ async def leaderboard(ctx, stat: str = "wins"):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
