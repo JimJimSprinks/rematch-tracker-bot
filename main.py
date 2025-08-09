@@ -53,23 +53,19 @@ async def forcelink(ctx, member: discord.Member, profile_url: str):
 @bot.command()
 async def link(ctx, profile_url: str):
     try:
-        discord_id = str(ctx.author.id)
-
-        async with aiosqlite.connect("linked_profiles.db") as db:
-            async with db.execute("SELECT * FROM linked_profiles WHERE discord_id = ?", (discord_id,)) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    await ctx.send("⚠️ You have already linked a profile. Contact an admin to relink.")
-                    return
-
         parts = profile_url.strip('/').split('/')
         profile_index = parts.index("player")
         platform = parts[profile_index + 1]
         user_id = parts[profile_index + 2]
 
+        if member and not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ You must be an admin to check another user's rank.")
+            return
+        discord_id = str(member.id if member else ctx.author.id)
+
         async with aiosqlite.connect("linked_profiles.db") as db:
             await db.execute(
-                "INSERT INTO linked_profiles (discord_id, platform, player_id) VALUES (?, ?, ?)",
+                "REPLACE INTO linked_profiles (discord_id, platform, player_id) VALUES (?, ?, ?)",
                 (discord_id, platform, user_id)
             )
             await db.commit()
@@ -201,6 +197,75 @@ async def stats(ctx, member: discord.Member = None):
     except Exception as e:
         await ctx.send(f"❌ Error fetching stats: {e}")
 
+@bot.command()
+async def rstats(ctx, member: discord.Member = None):
+    try:
+        discord_id = str(member.id if member else ctx.author.id)
+
+        async with aiosqlite.connect("linked_profiles.db") as db:
+            async with db.execute("SELECT platform, player_id FROM linked_profiles WHERE discord_id = ?", (discord_id,)) as cursor:
+                row = await cursor.fetchone()
+
+        if row is None:
+            await ctx.send("❌ You haven't linked a profile yet. Use `!link <REMATCH TRACKER (not U.gg) profile URL>` first.")
+            return
+
+        platform, player_id = row
+        profile_data = await fetch_profile_same_page(platform, player_id)
+
+        target_name = member.display_name if member else ctx.author.display_name
+        avatar_url = (member or ctx.author).avatar.url if (member or ctx.author).avatar else None
+        image_path = await generate_rank_stats_card(target_name, profile_data, avatar_url)
+        file = discord.File(image_path, filename="rank_stats.png")
+        await ctx.send(file=file)
+        os.remove(image_path)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching ranked stats: {e}")
+
+async def fetch_profile_same_page(platform: str, player_id: str) -> dict:
+    from playwright.async_api import async_playwright
+
+    url = f"https://www.rematchtracker.com/player/{platform}/{player_id}"
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+        await page.goto(url)
+        await page.wait_for_selector("h1")
+
+        # Open dropdown and select Ranked
+        await page.click("div.flex.flex-col.sm\\:flex-row.justify-between.items-start.sm\\:items-center.gap-4.mb-6.svelte-kej2cd div")
+        for _ in range(4):
+            await page.keyboard.press("ArrowDown")
+        await page.keyboard.press("Enter")
+
+        await page.wait_for_timeout(2000)  # Allow page to update
+        html = await page.content()
+        await browser.close()
+
+    soup = BeautifulSoup(html, 'html.parser')
+
+    name = soup.select_one("h1").get_text(strip=True) if soup.select_one("h1") else "Unknown"
+    rank = soup.select_one("div.text-lg.font-bold.text-white").get_text(strip=True) if soup.select_one("div.text-lg.font-bold.text-white") else "N/A"
+
+    def get_stat(selector):
+        el = soup.select_one(selector)
+        return el.get_text(strip=True) if el else "N/A"
+
+    return {
+        "name": name,
+        "rank": rank,
+        "wins": get_stat("div.text-lg.font-bold.text-green-400.svelte-kej2cd"),
+        "losses": get_stat("div.text-lg.font-bold.text-red-400.svelte-kej2cd"),
+        "goals": get_stat("span.font-bold.text-purple-400.svelte-kej2cd"),
+        "passes": get_stat("span.font-bold.text-blue-400.svelte-kej2cd"),
+        "steals": get_stat("span.font-bold.text-pink-400.svelte-kej2cd"),
+        "saves": get_stat("span.font-bold.text-red-400.svelte-kej2cd")
+    }
+
+
 async def generate_stats_card(user_name, profile_data, avatar_url=None):
     bg = Image.new("RGBA", (800, 300), (30, 30, 30, 255))
     draw = ImageDraw.Draw(bg)
@@ -255,8 +320,9 @@ async def generate_stats_card(user_name, profile_data, avatar_url=None):
             "Gold": "assets/ranks/gold.png",
             "Platinum": "assets/ranks/platinum.png",
             "Diamond": "assets/ranks/diamond.png",
-            "Master": "assets/ranks/master.png",
-            "Elite": "assets/ranks/elite.png",
+            "Champion": "assets/ranks/champion.png",
+            "Grand Champion": "assets/ranks/grand_champion.png",
+            "Legend": "assets/ranks/legend.png"
         }
         rank_name = profile_data.get('rank', '')
         for key in rank_icons:
@@ -313,6 +379,119 @@ async def generate_stats_card(user_name, profile_data, avatar_url=None):
     bg.save(path)
     return path
 
+async def generate_rank_stats_card(user_name, profile_data, avatar_url=None):
+    bg = Image.new("RGBA", (800, 300), (30, 30, 30, 255))
+    draw = ImageDraw.Draw(bg)
+
+    if avatar_url:
+        try:
+            import requests
+            from io import BytesIO
+            response = requests.get(avatar_url)
+            avatar_img = Image.open(BytesIO(response.content)).convert("RGBA")
+            w, h = avatar_img.size
+            min_dim = min(w, h)
+            left = (w - min_dim) // 2
+            top = (h - min_dim) // 2
+            avatar_img = avatar_img.crop((left, top, left + min_dim, top + min_dim)).resize((128, 128), Image.LANCZOS)
+
+            mask = Image.new("L", (128, 128), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.ellipse((0, 0, 128, 128), fill=255)
+
+            border_layer = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+            border_draw = ImageDraw.Draw(border_layer)
+            border_draw.ellipse((0, 0, 128, 128), outline=(255, 255, 255, 255), width=4)
+
+            avatar_circular = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+            avatar_circular.paste(avatar_img, (0, 0), mask)
+            avatar_final = Image.alpha_composite(avatar_circular, border_layer)
+
+            avatar_x = 640  # shifted 20px left from previous 660 for padding
+            avatar_y = (300 - 128) // 2
+            bg.paste(avatar_final, (avatar_x, avatar_y), avatar_final)
+        except Exception as e:
+            print(f"Error loading avatar: {e}")
+
+    try:
+        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        title_font = ImageFont.truetype(font_path, 36)
+        stat_font = ImageFont.truetype(font_path, 32)
+    except:
+        title_font = stat_font = ImageFont.load_default()
+
+    title_text = f"{user_name}'s Ranked Stats"
+    title_width = draw.textlength(title_text, font=title_font)
+    draw.text((30, 30), title_text, font=title_font, fill=(255, 255, 255))
+
+    try:
+        from io import BytesIO
+        import requests
+        rank_icons = {
+            "Bronze": "assets/ranks/bronze.png",
+            "Silver": "assets/ranks/silver.png",
+            "Gold": "assets/ranks/gold.png",
+            "Platinum": "assets/ranks/platinum.png",
+            "Diamond": "assets/ranks/diamond.png",
+            "Champion": "assets/ranks/champion.png",
+            "Grand Champion": "assets/ranks/grand_champion.png",
+            "Legend": "assets/ranks/legend.png"
+        }
+        rank_name = profile_data.get('rank', '')
+        for key in rank_icons:
+            if key.lower() in rank_name.lower():
+                icon_path = rank_icons[key]
+                if os.path.exists(icon_path):
+                    rank_icon = Image.open(icon_path).convert("RGBA").resize((36, 36), Image.LANCZOS)
+                    bg.paste(rank_icon, (40 + int(title_width), 30), rank_icon)
+                    draw.text((80 + int(title_width), 30), rank_name, font=title_font, fill=(255, 215, 0))
+                    break
+    except Exception as e:
+        print(f"Error loading rank icon: {e}")
+
+    # Draw Wins and Losses
+    y_stats = 110
+    wins = int(profile_data['wins'])
+    losses = int(profile_data['losses'])
+    total_games = wins + losses
+    win_percent = round((wins / total_games) * 100, 1) if total_games > 0 else 0.0
+
+    draw.text((30, y_stats), "Wins:", font=stat_font, fill=(0, 255, 0))
+    draw.text((120, y_stats), str(wins), font=stat_font, fill=(255, 255, 255))
+    draw.text((250, y_stats), "Losses:", font=stat_font, fill=(255, 0, 0))
+    draw.text((370, y_stats), str(losses), font=stat_font, fill=(255, 255, 255))
+
+    # Draw remaining stats in two evenly spaced columns
+    left_column = [
+        ("Goals", profile_data['goals']),
+        ("Passes", profile_data['passes']),
+        ("Win%", f"{win_percent}%")
+    ]
+    right_column = [
+        ("Saves", profile_data['saves']),
+        ("Steals", profile_data['steals'])
+    ]
+
+    y_base = y_stats + 50
+    row_spacing = 36
+    for i, (label, value) in enumerate(left_column):
+        if label == "Win%":
+            draw.text((30, y_base + i * row_spacing), f"{label}:", font=stat_font, fill=(100, 200, 255))
+            draw.text((130, y_base + i * row_spacing), str(value), font=stat_font, fill=(255, 255, 255))
+        else:
+            draw.text((30, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
+
+    for i, (label, value) in enumerate(right_column):
+        draw.text((250, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
+
+    if not os.path.exists("rank_stat_cards"):
+        os.makedirs("rank_stat_cards")
+    import re
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_name)
+    path = f"rank_stat_cards/{safe_name}_rank_stats.png"
+    bg.save(path)
+    return path
+
 async def fetch_profile(platform: str, player_id: str) -> dict:
     from playwright.async_api import async_playwright
 
@@ -354,6 +533,7 @@ async def fetch_profile(platform: str, player_id: str) -> dict:
         "steals": get_stat_by_selector("span.font-bold.text-pink-400.svelte-kej2cd"),
         "saves": get_stat_by_selector("span.font-bold.text-red-400.svelte-kej2cd")
     }
+
 
 from PIL import Image, ImageDraw, ImageFont
 import os
@@ -413,7 +593,7 @@ async def generate_rank_card(user_name, rank, avatar_url=None):
     # Draw text
     try:
         base_font_size = 36
-        font_path = "/usr/share/fonts/truetype/msttcorefonts/arial.ttf"
+        font_path = "arial.ttf"
         font = ImageFont.truetype(font_path, base_font_size)
     except:
         font = ImageFont.load_default()
@@ -454,6 +634,7 @@ async def generate_rank_card(user_name, rank, avatar_url=None):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
