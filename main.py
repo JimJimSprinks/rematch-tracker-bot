@@ -933,13 +933,13 @@ async def leaderboard(ctx, stat: str = "wins"):
 
             # Rank symbol and color
             if i == 0:
-                rank_symbol = "🥇"
+                rank_symbol = "1"
                 rank_color = (255, 215, 0)      # Gold
             elif i == 1:
-                rank_symbol = "🥈"
+                rank_symbol = "2"
                 rank_color = (192, 192, 192)    # Silver
             elif i == 2:
-                rank_symbol = "🥉"
+                rank_symbol = "3"
                 rank_color = (205, 127, 50)     # Bronze
             else:
                 rank_symbol = f"{i+1}."
@@ -982,6 +982,7 @@ async def leaderboard(ctx, stat: str = "wins"):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
