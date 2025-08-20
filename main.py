@@ -215,6 +215,7 @@ async def update_last_stats(discord_id: str, platform: str, player_id: str, prof
             "passes": profile_data.get("passes", "N/A"),
             "steals": profile_data.get("steals", "N/A"),
             "saves": profile_data.get("saves", "N/A"),
+            "assists": profile_data.get("assists", "N/A"),
         }
         data[discord_id] = entry
         _save_last_stats_sync(data)
@@ -349,9 +350,11 @@ async def fetch_profile_same_page(platform: str, player_id: str) -> dict:
     name = soup.select_one("h1").get_text(strip=True) if soup.select_one("h1") else "Unknown"
     rank = soup.select_one("div.text-lg.font-bold.text-white").get_text(strip=True) if soup.select_one("div.text-lg.font-bold.text-white") else "N/A"
 
-    def get_stat(selector):
-        el = soup.select_one(selector)
-        return el.get_text(strip=True) if el else "N/A"
+    def get_stat(selector, index=0):
+        els = soup.select(selector)
+        if els and len(els) > index:
+            return els[index].get_text(strip=True)
+        return "N/A"
 
     return {
         "name": name,
@@ -359,9 +362,10 @@ async def fetch_profile_same_page(platform: str, player_id: str) -> dict:
         "wins": get_stat("div.text-lg.font-bold.text-green-400.svelte-kej2cd"),
         "losses": get_stat("div.text-lg.font-bold.text-red-400.svelte-kej2cd"),
         "goals": get_stat("span.font-bold.text-purple-400.svelte-kej2cd"),
-        "passes": get_stat("span.font-bold.text-blue-400.svelte-kej2cd"),
+        "passes": get_stat("span.font-bold.text-blue-400.svelte-kej2cd", 1),
         "steals": get_stat("span.font-bold.text-pink-400.svelte-kej2cd"),
-        "saves": get_stat("span.font-bold.text-red-400.svelte-kej2cd")
+        "saves": get_stat("span.font-bold.text-red-400.svelte-kej2cd"),
+        "assists": get_stat("span.font-bold.text-orange-400.svelte-kej2cd")
     }
 
 
@@ -395,9 +399,11 @@ async def fetch_profile(platform: str, player_id: str) -> dict:
     if rank_tag:
         rank = rank_tag.get_text(strip=True)
 
-    def get_stat_by_selector(selector):
-        el = soup.select_one(selector)
-        return el.get_text(strip=True) if el else "N/A"
+    def get_stat_by_selector(selector, index=0):
+        els = soup.select(selector)
+        if els and len(els) > index:
+            return els[index].get_text(strip=True)
+        return "N/A"
 
     return {
         "name": name,
@@ -405,9 +411,10 @@ async def fetch_profile(platform: str, player_id: str) -> dict:
         "wins": get_stat_by_selector("div.text-lg.font-bold.text-green-400.svelte-kej2cd"),
         "losses": get_stat_by_selector("div.text-lg.font-bold.text-red-400.svelte-kej2cd"),
         "goals": get_stat_by_selector("span.font-bold.text-purple-400.svelte-kej2cd"),
-        "passes": get_stat_by_selector("span.font-bold.text-blue-400.svelte-kej2cd"),
+        "passes": get_stat_by_selector("span.font-bold.text-blue-400.svelte-kej2cd", 1),
         "steals": get_stat_by_selector("span.font-bold.text-pink-400.svelte-kej2cd"),
-        "saves": get_stat_by_selector("span.font-bold.text-red-400.svelte-kej2cd")
+        "saves": get_stat_by_selector("span.font-bold.text-red-400.svelte-kej2cd"),
+        "assists": get_stat_by_selector("span.font-bold.text-orange-400.svelte-kej2cd")
     }
 
 
@@ -538,24 +545,25 @@ async def generate_stats_card(user_name, profile_data, avatar_url=None):
     left_column = [
         ("Goals", profile_data.get('goals', 'N/A')),
         ("Passes", profile_data.get('passes', 'N/A')),
-        ("Win%", f"{win_percent}%"),
+        ("Assists", profile_data.get('assists', 'N/A')),
     ]
     right_column = [
         ("Saves", profile_data.get('saves', 'N/A')),
         ("Steals", profile_data.get('steals', 'N/A')),
+        ("Win%", f"{win_percent}%"),
     ]
 
     y_base = y_stats + 50
     row_spacing = 36
-    for i, (label, value) in enumerate(left_column):
-        if label == "Win%":
-            draw.text((30, y_base + i * row_spacing), f"{label}:", font=stat_font, fill=(100, 200, 255))
-            draw.text((130, y_base + i * row_spacing), str(value), font=stat_font, fill=(255, 255, 255))
-        else:
-            draw.text((30, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
-
     for i, (label, value) in enumerate(right_column):
-        draw.text((250, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
+        if label == "Win%":
+            draw.text((250, y_base + i * row_spacing), f"{label}:", font=stat_font, fill=(100, 200, 255))
+            draw.text((370, y_base + i * row_spacing), str(value), font=stat_font, fill=(255, 255, 255))
+        else:
+            draw.text((250, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
+
+    for i, (label, value) in enumerate(left_column):
+        draw.text((30, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
 
     if not os.path.exists("stat_cards"):
         os.makedirs("stat_cards", exist_ok=True)
@@ -811,9 +819,9 @@ def _normalize_rank_name(rank: str) -> str:
 @bot.command()
 async def leaderboard(ctx, stat: str = "wins"):
     stat = stat.lower()
-    valid = ["wins", "goals", "saves", "rank"]
+    valid = ["wins", "goals", "saves", "rank", "passes", "steals", "assists", "%"]
     if stat not in valid:
-        await ctx.send("Valid leaderboard types: wins, goals, saves, rank")
+        await ctx.send("Valid leaderboard types: wins, goals, saves, rank, passes, steals, assists, win%")
         return
 
     data = await get_all_last_stats()
@@ -870,7 +878,7 @@ async def leaderboard(ctx, stat: str = "wins"):
     except Exception:
         title_font = entry_font = ImageFont.load_default()
 
-    draw.text((width // 2, 18), f"{stat.capitalize()} Leaderboard", font=title_font, anchor="ms", fill=(255, 255, 255))
+    draw.text((width // 2, 30), f"{stat.capitalize()} Leaderboard", font=title_font, anchor="ms", fill=(255, 255, 255))
 
     x_base = 20
     y_base = header_h
@@ -895,7 +903,21 @@ async def leaderboard(ctx, stat: str = "wins"):
 
             # Name
             name_x = x + 54
-            draw.text((name_x, y + 14), e['user'].name, font=entry_font, fill=(255, 255, 255))
+
+            # Rank number (1-based)
+            rank_num = f"{i+1}."
+
+            # Pick a color
+            if i == 0:
+                rank_color = (255, 215, 0)      # Gold
+            elif i == 1:
+                rank_color = (192, 192, 192)    # Silver
+            elif i == 2:
+                rank_color = (205, 127, 50)     # Bronze
+            else:
+                rank_color = (173, 216, 230)    # Light Blue
+                
+            draw.text((name_x, y + 14), f"{rank_num} {e['user'].name}", font=entry_font, fill=rank_color)
 
             # Rank emblem
             rank_name = _normalize_rank_name(e['rank'])
@@ -931,6 +953,7 @@ async def leaderboard(ctx, stat: str = "wins"):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
