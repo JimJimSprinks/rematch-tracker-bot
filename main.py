@@ -815,6 +815,23 @@ def _normalize_rank_name(rank: str) -> str:
         return "bronze"
     return rank.strip().title()
 
+def parse_number(value):
+    if value is None:
+        return 0
+    s = str(value).lower().replace(",", "").strip()
+    try:
+        if s.endswith("%"):
+            return float(s[:-1])  # "52%" -> 52.0
+        elif s.endswith("k"):
+            return float(s[:-1]) * 1000
+        elif s.endswith("m"):
+            return float(s[:-1]) * 1_000_000
+        elif s.endswith("b"):
+            return float(s[:-1]) * 1_000_000_000
+        else:
+            return float(s)
+    except Exception:
+        return 0
 
 @bot.command()
 async def leaderboard(ctx, stat: str = "wins"):
@@ -840,12 +857,19 @@ async def leaderboard(ctx, stat: str = "wins"):
             sort_val = RANK_PRIORITY.get(rank_name.title(), 0)
             display_val = rank_name
         else:
-            display_val = entry.get(stat, 0)
-            # try to coerce to int for sorting
-            try:
-                sort_val = int(re.sub(r"[^0-9]", "", str(display_val)))
-            except Exception:
-                sort_val = 0
+            raw_val = entry.get(stat, 0)
+            sort_val = parse_number(raw_val)
+        
+            if stat in ["%", "win%", "winrate", "win_rate"]:  # win% cases
+                try:
+                    # Always show one decimal place + %
+                    display_val = f"{float(sort_val):.1f}%"
+                except Exception:
+                    display_val = "0.0%"
+            else:
+                display_val = raw_val
+
+
         entries.append({
             "id": user_id,
             "user": user,
@@ -878,7 +902,7 @@ async def leaderboard(ctx, stat: str = "wins"):
     except Exception:
         title_font = entry_font = ImageFont.load_default()
 
-    draw.text((width // 2, 30), f"{stat.capitalize()} Leaderboard", font=title_font, anchor="ms", fill=(255, 255, 255))
+    draw.text((width // 2, 40), f"{stat.capitalize()} Leaderboard", font=title_font, anchor="ms", fill=(255, 255, 255))
 
     x_base = 20
     y_base = header_h
@@ -907,17 +931,22 @@ async def leaderboard(ctx, stat: str = "wins"):
             # Rank number (1-based)
             rank_num = f"{i+1}."
 
-            # Pick a color
+            # Rank symbol and color
             if i == 0:
+                rank_symbol = "🥇"
                 rank_color = (255, 215, 0)      # Gold
             elif i == 1:
+                rank_symbol = "🥈"
                 rank_color = (192, 192, 192)    # Silver
             elif i == 2:
+                rank_symbol = "🥉"
                 rank_color = (205, 127, 50)     # Bronze
             else:
+                rank_symbol = f"{i+1}."
                 rank_color = (173, 216, 230)    # Light Blue
-                
-            draw.text((name_x, y + 14), f"{rank_num} {e['user'].name}", font=entry_font, fill=rank_color)
+            
+            # Draw text with emoji and color
+            draw.text((name_x, y + 14), f"{rank_symbol} {e['user'].name}", font=entry_font, fill=rank_color)
 
             # Rank emblem
             rank_name = _normalize_rank_name(e['rank'])
@@ -953,6 +982,7 @@ async def leaderboard(ctx, stat: str = "wins"):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
