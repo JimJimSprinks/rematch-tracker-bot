@@ -225,6 +225,7 @@ async def update_last_stats(discord_id: str, platform: str, player_id: str, prof
 # --- Discord bot setup ---
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -575,7 +576,129 @@ async def generate_stats_card(user_name, profile_data, avatar_url=None):
 
 async def generate_rank_stats_card(user_name, profile_data, avatar_url=None):
     _require_pil()
-    return await generate_stats_card(user_name, profile_data, avatar_url)
+    from io import BytesIO
+    import aiohttp as _aiohttp
+
+    bg = Image.new("RGBA", (800, 300), (30, 30, 30, 255))
+    draw = ImageDraw.Draw(bg)
+
+    session = None
+    try:
+        session = _aiohttp.ClientSession()
+        if avatar_url:
+            try:
+                async with session.get(avatar_url, timeout=10) as resp:
+                    content = await resp.read()
+                    avatar_img = Image.open(BytesIO(content)).convert("RGBA")
+                    w, h = avatar_img.size
+                    min_dim = min(w, h)
+                    left = (w - min_dim) // 2
+                    top = (h - min_dim) // 2
+                    avatar_img = avatar_img.crop((left, top, left + min_dim, top + min_dim)).resize((128, 128), Image.LANCZOS)
+
+                    mask = Image.new("L", (128, 128), 0)
+                    mask_draw = ImageDraw.Draw(mask)
+                    mask_draw.ellipse((0, 0, 128, 128), fill=255)
+
+                    border_layer = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+                    border_draw = ImageDraw.Draw(border_layer)
+                    border_draw.ellipse((0, 0, 128, 128), outline=(255, 255, 255, 255), width=4)
+
+                    avatar_circular = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+                    avatar_circular.paste(avatar_img, (0, 0), mask)
+                    avatar_final = Image.alpha_composite(avatar_circular, border_layer)
+
+                    avatar_x = 640
+                    avatar_y = (300 - 128) // 2
+                    bg.paste(avatar_final, (avatar_x, avatar_y), avatar_final)
+            except Exception:
+                pass
+    finally:
+        if session:
+            await session.close()
+
+    try:
+        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        title_font = ImageFont.truetype(font_path, 36)
+        stat_font = ImageFont.truetype(font_path, 32)
+    except Exception:
+        title_font = stat_font = ImageFont.load_default()
+
+    title_text = f"{user_name}'s Ranked Stats"
+    try:
+        title_width = draw.textlength(title_text, font=title_font)
+    except Exception:
+        title_width = 0
+    draw.text((30, 30), title_text, font=title_font, fill=(255, 255, 255))
+
+    try:
+        rank_icons = {
+            "Bronze": "assets/ranks/bronze.png",
+            "Silver": "assets/ranks/silver.png",
+            "Gold": "assets/ranks/gold.png",
+            "Platinum": "assets/ranks/platinum.png",
+            "Diamond": "assets/ranks/diamond.png",
+            "Master": "assets/ranks/master.png",
+            "Elite": "assets/ranks/elite.png"
+        }
+        rank_name = profile_data.get('rank', '')
+        for key in rank_icons:
+            if key.lower() in str(rank_name).lower():
+                icon_path = rank_icons[key]
+                if os.path.exists(icon_path):
+                    rank_icon = Image.open(icon_path).convert("RGBA").resize((36, 36), Image.LANCZOS)
+                    bg.paste(rank_icon, (40 + int(title_width), 30), rank_icon)
+                    draw.text((80 + int(title_width), 30), rank_name, font=title_font, fill=(255, 215, 0))
+                    break
+    except Exception:
+        pass
+
+    def safe_int(val):
+        try:
+            return int(re.sub(r"[^0-9]", "", str(val)))
+        except Exception:
+            return 0
+
+    y_stats = 110
+    wins = safe_int(profile_data.get('wins', 0))
+    losses = safe_int(profile_data.get('losses', 0))
+    total_games = wins + losses
+    win_percent = round((wins / total_games) * 100, 1) if total_games > 0 else 0.0
+
+    draw.text((30, y_stats), "Wins:", font=stat_font, fill=(0, 255, 0))
+    draw.text((120, y_stats), str(wins), font=stat_font, fill=(255, 255, 255))
+    draw.text((250, y_stats), "Losses:", font=stat_font, fill=(255, 0, 0))
+    draw.text((370, y_stats), str(losses), font=stat_font, fill=(255, 255, 255))
+
+    left_column = [
+        ("Goals", profile_data.get('goals', 'N/A')),
+        ("Passes", profile_data.get('passes', 'N/A')),
+        ("Assists", profile_data.get('assists', 'N/A')),
+    ]
+    right_column = [
+        ("Saves", profile_data.get('saves', 'N/A')),
+        ("Steals", profile_data.get('steals', 'N/A')),
+        ("Win%", f"{win_percent}%"),
+    ]
+
+    y_base = y_stats + 50
+    row_spacing = 36
+    for i, (label, value) in enumerate(right_column):
+        if label == "Win%":
+            draw.text((250, y_base + i * row_spacing), f"{label}:", font=stat_font, fill=(100, 200, 255))
+            draw.text((370, y_base + i * row_spacing), str(value), font=stat_font, fill=(255, 255, 255))
+        else:
+            draw.text((250, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
+
+    for i, (label, value) in enumerate(left_column):
+        draw.text((30, y_base + i * row_spacing), f"{label}: {value}", font=stat_font, fill=(200, 200, 200))
+
+    if not os.path.exists("rank_stat_cards"):
+        os.makedirs("rank_stat_cards", exist_ok=True)
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_name)
+    path = f"rank_stat_cards/{safe_name}_rstats.png"
+    bg.save(path)
+    return path
 
 
 async def generate_rank_card(user_name, rank, avatar_url=None):
@@ -763,7 +886,7 @@ async def rstats(ctx, member: discord.Member = None):
         profile_data = await fetch_profile_same_page(platform, player_id)
 
         # Update cached last_stats
-        await update_last_stats(discord_id, platform, player_id, profile_data)
+        #await update_last_stats(discord_id, platform, player_id, profile_data)
 
         target_name = member.display_name if member else ctx.author.display_name
         avatar_url = (member or ctx.author).avatar.url if (member or ctx.author).avatar else None
@@ -815,23 +938,6 @@ def _normalize_rank_name(rank: str) -> str:
         return "bronze"
     return rank.strip().title()
 
-def parse_number(value):
-    if value is None:
-        return 0
-    s = str(value).lower().replace(",", "").strip()
-    try:
-        if s.endswith("%"):
-            return float(s[:-1])  # "52%" -> 52.0
-        elif s.endswith("k"):
-            return float(s[:-1]) * 1000
-        elif s.endswith("m"):
-            return float(s[:-1]) * 1_000_000
-        elif s.endswith("b"):
-            return float(s[:-1]) * 1_000_000_000
-        else:
-            return float(s)
-    except Exception:
-        return 0
 
 @bot.command()
 async def leaderboard(ctx, stat: str = "wins"):
@@ -852,23 +958,25 @@ async def leaderboard(ctx, stat: str = "wins"):
             user = await bot.fetch_user(int(user_id))
         except Exception:
             continue
-        if stat == "rank":
+
+        wins = int(re.sub(r"[^0-9]", "", str(entry.get("wins", 0))))
+        losses = int(re.sub(r"[^0-9]", "", str(entry.get("losses", 0))))
+        total_games = wins + losses
+
+        if stat == "%":
+            value = (round((wins / total_games) * 100, 1) if total_games > 0 else 0.0, total_games)
+            display_val = f"{value[0]:.1f}%"
+            sort_val = value
+        elif stat == "rank":
             rank_name = entry.get('rank', 'Bronze')
             sort_val = RANK_PRIORITY.get(rank_name.title(), 0)
             display_val = rank_name
         else:
-            raw_val = entry.get(stat, 0)
-            sort_val = parse_number(raw_val)
-        
-            if stat in ["%", "win%", "winrate", "win_rate"]:  # win% cases
-                try:
-                    # Always show one decimal place + %
-                    display_val = f"{float(sort_val):.1f}%"
-                except Exception:
-                    display_val = "0.0%"
-            else:
-                display_val = raw_val
-
+            display_val = entry.get(stat, 0)
+            try:
+                sort_val = int(re.sub(r"[^0-9]", "", str(display_val)))
+            except Exception:
+                sort_val = 0
 
         entries.append({
             "id": user_id,
@@ -878,12 +986,17 @@ async def leaderboard(ctx, stat: str = "wins"):
             "sort": sort_val
         })
 
-    reverse = stat != "rank"
-    entries.sort(key=lambda x: x['sort'], reverse=reverse)
+    reverse = True if stat != "rank" else False
+    if stat == "%":
+        entries.sort(key=lambda x: (x['sort'][0], x['sort'][1]), reverse=True)
+    else:
+        entries.sort(key=lambda x: x['sort'], reverse=reverse)
 
-    # Build image
+    # --- build image ---
     _require_pil()
     from io import BytesIO
+    from PIL import Image, ImageDraw, ImageFont
+    import aiohttp
 
     rows_per_col = 10
     row_h = 56
@@ -902,7 +1015,7 @@ async def leaderboard(ctx, stat: str = "wins"):
     except Exception:
         title_font = entry_font = ImageFont.load_default()
 
-    draw.text((width // 2, 40), f"{stat.capitalize()} Leaderboard", font=title_font, anchor="ms", fill=(255, 255, 255))
+    draw.text((width // 2, 30), f"{stat.capitalize()} Leaderboard", font=title_font, anchor="ms", fill=(255, 255, 255))
 
     x_base = 20
     y_base = header_h
@@ -917,36 +1030,51 @@ async def leaderboard(ctx, stat: str = "wins"):
             x = x_base + col * col_w
             y = y_base + row * row_h
 
-            # Avatar
-            avatar_img = await _fetch_avatar_image(e['user'])
+            # Fetch and crop avatar
             try:
-                avatar_thumb = avatar_img.resize((40, 40))
+                async with session.get(e['user'].avatar.url) as resp:
+                    content = await resp.read()
+                    avatar_img = Image.open(BytesIO(content)).convert("RGBA")
+                    w, h = avatar_img.size
+                    min_dim = min(w, h)
+                    left = (w - min_dim) // 2
+                    top = (h - min_dim) // 2
+                    avatar_img = avatar_img.crop((left, top, left + min_dim, top + min_dim)).resize((40, 40), Image.LANCZOS)
+
+                    mask = Image.new("L", (40, 40), 0)
+                    mask_draw = ImageDraw.Draw(mask)
+                    mask_draw.ellipse((0, 0, 40, 40), fill=255)
+
+                    border_layer = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+                    border_draw = ImageDraw.Draw(border_layer)
+                    border_draw.ellipse((0, 0, 40, 40), outline=(255, 255, 255, 255), width=2)
+
+                    avatar_circular = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+                    avatar_circular.paste(avatar_img, (0, 0), mask)
+                    avatar_final = Image.alpha_composite(avatar_circular, border_layer)
             except Exception:
-                avatar_thumb = Image.new("RGBA", (40, 40), (100, 100, 100, 255))
-            img.paste(avatar_thumb, (x, y + 8), avatar_thumb)
+                avatar_final = Image.new("RGBA", (40, 40), (100, 100, 100, 255))
 
-            # Name
+            img.paste(avatar_final, (x, y + 8), avatar_final)
+
+            # Display nickname
+            member = ctx.guild.get_member(int(e['user'].id))
+            display_name = member.display_name if member else e['user'].name
+
             name_x = x + 54
-
-            # Rank number (1-based)
             rank_num = f"{i+1}."
 
-            # Rank symbol and color
+            # Top 3 coloring
             if i == 0:
-                rank_symbol = "1"
-                rank_color = (255, 215, 0)      # Gold
+                rank_color = (255, 215, 0)
             elif i == 1:
-                rank_symbol = "2"
-                rank_color = (192, 192, 192)    # Silver
+                rank_color = (192, 192, 192)
             elif i == 2:
-                rank_symbol = "3"
-                rank_color = (205, 127, 50)     # Bronze
+                rank_color = (205, 127, 50)
             else:
-                rank_symbol = f"{i+1}."
-                rank_color = (173, 216, 230)    # Light Blue
-            
-            # Draw text with emoji and color
-            draw.text((name_x, y + 14), f"{rank_symbol} {e['user'].name}", font=entry_font, fill=rank_color)
+                rank_color = (173, 216, 230)
+
+            draw.text((name_x, y + 14), f"{rank_num} {display_name}", font=entry_font, fill=rank_color)
 
             # Rank emblem
             rank_name = _normalize_rank_name(e['rank'])
@@ -957,14 +1085,12 @@ async def leaderboard(ctx, stat: str = "wins"):
                 emblem = None
 
             if stat == 'rank':
-                # Emblem then rank name
                 if emblem:
                     img.paste(emblem, (name_x + 180, y + 10), emblem)
                     draw.text((name_x + 220, y + 14), str(e['value']), font=entry_font, fill=(255, 255, 255))
                 else:
                     draw.text((name_x + 180, y + 14), str(e['value']), font=entry_font, fill=(255, 255, 255))
             else:
-                # Name, emblem, then value
                 if emblem:
                     img.paste(emblem, (name_x + 200, y + 10), emblem)
                     draw.text((name_x + 240, y + 14), str(e['value']), font=entry_font, fill=(255, 255, 255))
@@ -982,6 +1108,7 @@ async def leaderboard(ctx, stat: str = "wins"):
 # Run the bot
 import os
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
 
 
 
